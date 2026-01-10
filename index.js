@@ -17,8 +17,8 @@ const WordModel = mongoose.model('Word', WordSchema);
 // --- CẤU HÌNH BOT ---
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 let allWords = new Set(); 
-let priorityWords = new Set(); // Ưu tiên từ link JSON của m
-let mongoWords = new Set(); // Dùng để hiện sao ⭐
+let priorityWords = new Set(); // Ưu tiên số 1
+let mongoWords = new Set(); // Bình đẳng, dùng để hiện ⭐
 const suggestionHistory = new Map();
 
 const PRIORITY_SOURCE = 'https://raw.githubusercontent.com/c5least011/botgoiynoitu/refs/heads/main/data.json';
@@ -37,31 +37,37 @@ function isValid(w) {
 async function loadDict() {
     console.log('--- Đang quét kho vũ khí ---');
     
-    // 1. Load hàng ƯU TIÊN (Link JSON m đưa)
+    // 1. Load hàng ƯU TIÊN SỐ 1 (Link JSON m vừa đưa)
     try {
         const res = await axios.get(PRIORITY_SOURCE);
-        const data = Array.isArray(res.data) ? res.data : [];
-        data.forEach(w => {
-            let clean = w.trim().toLowerCase();
-            if (isValid(clean)) {
-                priorityWords.add(clean);
-                allWords.add(clean);
-            }
-        });
-        console.log(`✅ Đã nạp ${priorityWords.size} từ ƯU TIÊN.`);
-    } catch (err) { console.log('❌ Lỗi nạp source cá nhân'); }
+        // Fix lỗi dấu ngoặc kép thông minh trong JSON
+        let rawData = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+        let data = JSON.parse(rawData.replace(/“|”/g, '"'));
+        
+        if (Array.isArray(data)) {
+            data.forEach(w => {
+                let clean = w.trim().toLowerCase();
+                if (isValid(clean)) {
+                    priorityWords.add(clean);
+                    allWords.add(clean);
+                }
+            });
+            console.log(`✅ Đã nạp ${priorityWords.size} từ ƯU TIÊN.`);
+        }
+    } catch (err) { console.log('❌ Lỗi nạp source cá nhân:', err.message); }
 
-    // 2. Load MongoDB (Bình đẳng với GitHub công cộng)
+    // 2. Load MongoDB (Bình đẳng)
     try {
         const dbWords = await WordModel.find();
         dbWords.forEach(w => {
-            allWords.add(w.text);
-            mongoWords.add(w.text);
+            let clean = w.text.trim().toLowerCase();
+            allWords.add(clean);
+            mongoWords.add(clean);
         });
         console.log(`✅ Đã nạp ${dbWords.length} từ từ MongoDB.`);
-    } catch (err) { console.log('❌ Lỗi nạp Mongo:', err.message); }
+    } catch (err) { console.log('❌ Lỗi nạp Mongo'); }
 
-    // 3. Load GitHub Sources
+    // 3. Load GitHub Sources công cộng (Bình đẳng)
     for (const url of jsonSources) {
         try {
             const res = await axios.get(url, { responseType: 'text' });
@@ -93,7 +99,7 @@ function findSuggestion(input, excluded = []) {
     let inPriority = Array.from(priorityWords).filter(w => w.startsWith(input + ' ') && !excluded.includes(w));
     let inAll = fullList.filter(w => w.startsWith(input + ' ') && !excluded.includes(w));
 
-    // Ưu tiên hốt hàng trong JSON m đưa trước
+    // CHỈ ƯU TIÊN file data.json cá nhân
     let targetList = inPriority.length > 0 ? inPriority : inAll;
 
     if (targetList.length === 0) return null;
@@ -107,20 +113,26 @@ function findSuggestion(input, excluded = []) {
         ? killWords[Math.floor(Math.random() * killWords.length)] 
         : targetList[Math.floor(Math.random() * targetList.length)];
     
-    const isKill = killWords.includes(result);
-    const fromMongo = mongoWords.has(result);
+    // Tag nhận biết: 💎 cho hàng JSON ưu tiên, ⭐ cho hàng Mongo
+    let tag = '';
+    if (priorityWords.has(result)) tag = ' 💎';
+    else if (mongoWords.has(result)) tag = ' ⭐';
 
-    return { word: result, isKill, fromMongo };
+    return { 
+        word: result, 
+        isKill: killWords.includes(result),
+        tag: tag
+    };
 }
 
 const commands = [
     new SlashCommandBuilder()
         .setName('goiynoitu')
-        .setDescription('Gợi ý nối từ')
+        .setDescription('Gợi ý nối từ (Ưu tiên JSON cá nhân)')
         .addStringOption(opt => opt.setName('tu').setDescription('Từ đối phương nhập').setRequired(true)),
     new SlashCommandBuilder()
         .setName('train')
-        .setDescription('Dạy bot từ mới')
+        .setDescription('Dạy bot từ mới (Lưu Mongo)')
         .addStringOption(opt => opt.setName('tu_moi').setDescription('Từ 2 tiếng').setRequired(true))
 ].map(cmd => cmd.toJSON());
 
@@ -128,7 +140,7 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 client.on('ready', async () => {
     await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
-    console.log('🤖 Bot online! Đã sẵn sàng nã đạn.');
+    console.log('🤖 Bot online! Ưu tiên data.json cá nhân.');
 });
 
 client.on('interactionCreate', async (interaction) => {
@@ -149,7 +161,7 @@ client.on('interactionCreate', async (interaction) => {
             );
 
             await interaction.editReply({
-                content: `Gợi ý: **${res.word}** ${res.isKill ? '🔥' : '✅'}${res.fromMongo ? ' ⭐' : ''}`,
+                content: `Gợi ý: **${res.word}** ${res.isKill ? '🔥' : '✅'}${res.tag}`,
                 components: [row]
             });
         }
@@ -181,7 +193,7 @@ client.on('interactionCreate', async (interaction) => {
 
         data.history.push(res.word);
         await interaction.editReply({
-            content: `Gợi ý: **${res.word}** ${res.isKill ? '🔥' : '✅'}${res.fromMongo ? ' ⭐' : ''}`,
+            content: `Gợi ý: **${res.word}** ${res.isKill ? '🔥' : '✅'}${res.tag}`,
             components: [interaction.message.components[0]]
         });
     }
@@ -191,5 +203,5 @@ loadDict().then(() => client.login(process.env.TOKEN));
 
 const express = require('express');
 const app = express();
-app.get('/', (req, res) => res.send('Bot đang chạy và ko vị vấp đá'));
+app.get('/', (req, res) => res.send('Bot đang chạy m ơi!'));
 app.listen(process.env.PORT || 3000);
