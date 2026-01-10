@@ -16,7 +16,8 @@ const WordModel = mongoose.model('Word', WordSchema);
 
 // --- CẤU HÌNH BOT ---
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-let words = new Set();
+let allWords = new Set(); // Tổng kho
+let mongoWords = new Set(); // Chỉ hàng m train
 const suggestionHistory = new Map();
 
 const jsonSources = [
@@ -37,7 +38,10 @@ async function loadDict() {
     // 1. Load từ MongoDB
     try {
         const dbWords = await WordModel.find();
-        dbWords.forEach(w => words.add(w.text));
+        dbWords.forEach(w => {
+            allWords.add(w.text);
+            mongoWords.add(w.text);
+        });
         console.log(`✅ Đã nạp ${dbWords.length} từ từ MongoDB.`);
     } catch (err) { console.log('❌ Lỗi nạp Mongo:', err.message); }
 
@@ -50,39 +54,48 @@ async function loadDict() {
                 try {
                     const obj = JSON.parse(line);
                     let clean = obj.text.trim().toLowerCase();
-                    if (isValid(clean)) words.add(clean);
+                    if (isValid(clean)) allWords.add(clean);
                 } catch (e) {}
             });
         } catch (err) {}
     }
 
-    // 3. Load Plain Text Source
     try {
         const res = await axios.get(plainTextSource, { responseType: 'text' });
         res.data.split(/\r?\n/).forEach(line => {
             let clean = line.trim().toLowerCase();
-            if (isValid(clean)) words.add(clean);
+            if (isValid(clean)) allWords.add(clean);
         });
     } catch (err) {}
 
-    console.log('--- Xong! Tổng kho:', words.size, 'từ ---');
+    console.log('--- Xong! Tổng kho:', allWords.size, 'từ ---');
 }
 
 function findSuggestion(input, excluded = []) {
-    const list = Array.from(words);
-    let available = list.filter(w => w.startsWith(input + ' ') && !excluded.includes(w));
-    if (available.length === 0) return null;
+    const fullList = Array.from(allWords);
 
-    const killWords = available.filter(w => {
+    let availableInMongo = Array.from(mongoWords).filter(w => w.startsWith(input + ' ') && !excluded.includes(w));
+    let availableInAll = fullList.filter(w => w.startsWith(input + ' ') && !excluded.includes(w));
+    let targetList = availableInMongo.length > 0 ? availableInMongo : availableInAll;
+
+    if (targetList.length === 0) return null;
+
+    const killWords = targetList.filter(w => {
         const nextStart = w.split(/\s+/)[1];
-        return !list.some(n => n.startsWith(nextStart + ' '));
+        return !fullList.some(n => n.startsWith(nextStart + ' '));
     });
 
     const result = killWords.length > 0 
         ? killWords[Math.floor(Math.random() * killWords.length)] 
-        : available[Math.floor(Math.random() * available.length)];
+        : targetList[Math.floor(Math.random() * targetList.length)];
     
-    return { word: result, isKill: killWords.includes(result) };
+    const fromMongo = mongoWords.has(result);
+
+    return { 
+        word: result, 
+        isKill: killWords.includes(result),
+        fromMongo: fromMongo
+    };
 }
 
 const commands = [
@@ -100,7 +113,7 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 client.on('ready', async () => {
     await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
-    console.log('🤖 Bot online!');
+    console.log('🤖 Bot online! Đã sẵn sàng nã đạn.');
 });
 
 client.on('interactionCreate', async (interaction) => {
@@ -111,7 +124,7 @@ client.on('interactionCreate', async (interaction) => {
 
             const history = [];
             const res = findSuggestion(input, history);
-            if (!res) return await interaction.editReply(`K tìm thấy từ nào nối với **${input}** hoặc ko có trong kho`);
+            if (!res) return await interaction.editReply(`Chịu, k nối nổi từ **${input}**`);
 
             history.push(res.word);
             suggestionHistory.set(interaction.id, { input, history });
@@ -121,22 +134,23 @@ client.on('interactionCreate', async (interaction) => {
             );
 
             await interaction.editReply({
-                content: `Gợi ý: **${res.word}** ${res.isKill ? '🔥 (Sát chiêu!)' : '✅'}`,
+                content: `Gợi ý: **${res.word}** ${res.isKill ? '🔥' : '✅'}${res.fromMongo ? '⭐' : ''}`,
                 components: [row]
             });
         }
 
         if (interaction.commandName === 'train') {
             const newWord = interaction.options.getString('tu_moi').trim().toLowerCase();
-            if (!isValid(newWord)) return await interaction.reply({ content: 'Từ dỏm, nhập lại đi', ephemeral: true });
-            if (words.has(newWord)) return await interaction.reply({ content: 'Từ này có r', ephemeral: true });
+            if (!isValid(newWord)) return await interaction.reply({ content: 'Từ dỏm k nạp nhé', ephemeral: true });
+            if (mongoWords.has(newWord)) return await interaction.reply({ content: 'có r', ephemeral: true });
 
             try {
                 await WordModel.create({ text: newWord });
-                words.add(newWord);
+                allWords.add(newWord);
+                mongoWords.add(newWord);
                 await interaction.reply({ content: `Đã nạp **${newWord}** vào kho`, ephemeral: true });
             } catch (e) {
-                await interaction.reply({ content: 'Lỗi r', ephemeral: true });
+                await interaction.reply({ content: 'Lỗi rồi', ephemeral: true });
             }
         }
     }
@@ -144,21 +158,22 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isButton()) {
         const oldId = interaction.customId.split('_')[1];
         const data = suggestionHistory.get(oldId);
-        if (!data) return await interaction.reply({ content: 'Hết hạn!', ephemeral: true });
+        if (!data) return await interaction.reply({ content: 'Lệnh cũ r', ephemeral: true });
 
         await interaction.deferUpdate();
         const res = findSuggestion(data.input, data.history);
-        if (!res) return await interaction.followUp({ content: 'Hết từ hoặc ko có trong kho', ephemeral: true });
+        if (!res) return await interaction.followUp({ content: 'Hết từ r!', ephemeral: true });
 
         data.history.push(res.word);
         await interaction.editReply({
-            content: `Gợi ý: **${res.word}** ${res.isKill ? '🔥 (Sát chiêu!)' : '✅'}`,
+            content: `Gợi ý: **${res.word}** ${res.isKill ? '🔥' : '✅'}${res.fromMongo ? ' ⭐' : ''}`,
             components: [interaction.message.components[0]]
         });
     }
 });
 
 loadDict().then(() => client.login(process.env.TOKEN));
+
 const express = require('express');
 const app = express();
 app.get('/', (req, res) => res.send('Bot đang chạy m ơi!'));
