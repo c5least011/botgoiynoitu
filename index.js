@@ -111,7 +111,7 @@ client.on('interactionCreate', async (interaction) => {
 
             const history = [];
             const res = findSuggestion(input, history);
-            if (!res) return await interaction.editReply(`K tìm thấy từ nào nối với **${input}**`);
+            if (!res) return await interaction.editReply(`K tìm thấy từ nào nối với **${input}** hoặc ko có trong kho`);
 
             history.push(res.word);
             suggestionHistory.set(interaction.id, { input, history });
@@ -128,15 +128,15 @@ client.on('interactionCreate', async (interaction) => {
 
         if (interaction.commandName === 'train') {
             const newWord = interaction.options.getString('tu_moi').trim().toLowerCase();
-            if (!isValid(newWord)) return await interaction.reply({ content: 'Từ dỏm, nhập lại đi m!', ephemeral: true });
-            if (words.has(newWord)) return await interaction.reply({ content: 'Từ này có r!', ephemeral: true });
+            if (!isValid(newWord)) return await interaction.reply({ content: 'Từ dỏm, nhập lại đi', ephemeral: true });
+            if (words.has(newWord)) return await interaction.reply({ content: 'Từ này có r', ephemeral: true });
 
             try {
                 await WordModel.create({ text: newWord });
                 words.add(newWord);
-                await interaction.reply({ content: `Đã nạp **${newWord}** vào DB vĩnh viễn!`, ephemeral: true });
+                await interaction.reply({ content: `Đã nạp **${newWord}** vào kho`, ephemeral: true });
             } catch (e) {
-                await interaction.reply({ content: 'Lỗi r m ơi!', ephemeral: true });
+                await interaction.reply({ content: 'Lỗi r', ephemeral: true });
             }
         }
     }
@@ -148,7 +148,7 @@ client.on('interactionCreate', async (interaction) => {
 
         await interaction.deferUpdate();
         const res = findSuggestion(data.input, data.history);
-        if (!res) return await interaction.followUp({ content: 'Hết từ r m ơi!', ephemeral: true });
+        if (!res) return await interaction.followUp({ content: 'Hết từ hoặc ko có trong kho', ephemeral: true });
 
         data.history.push(res.word);
         await interaction.editReply({
