@@ -159,3 +159,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 loadDict().then(() => client.login(process.env.TOKEN));
+const express = require('express');
+const app = express();
+app.get('/', (req, res) => res.send('Bot đang chạy m ơi!'));
+app.listen(process.env.PORT || 3000);
