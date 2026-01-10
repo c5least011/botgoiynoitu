@@ -128,7 +128,7 @@ function findSuggestion(input, excluded = []) {
 const commands = [
     new SlashCommandBuilder()
         .setName('goiynoitu')
-        .setDescription('Gợi ý nối từ (Ưu tiên JSON cá nhân)')
+        .setDescription('Gợi ý nối từ')
         .addStringOption(opt => opt.setName('tu').setDescription('Từ đối phương nhập').setRequired(true)),
     new SlashCommandBuilder()
         .setName('train')
