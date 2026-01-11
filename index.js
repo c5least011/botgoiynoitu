@@ -6,6 +6,7 @@ const {
 } = require('discord.js');
 const axios = require('axios');
 const mongoose = require('mongoose');
+
 // setup DB
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('✅ Đã thông nòng MongoDB'))
@@ -14,10 +15,15 @@ mongoose.connect(process.env.MONGO_URI)
 const WordSchema = new mongoose.Schema({ text: { type: String, unique: true } });
 const WordModel = mongoose.model('Word', WordSchema);
 
+const VuaTVSchema = new mongoose.Schema({ text: { type: String, unique: true } });
+const VuaTVModel = mongoose.model('VuaTV', VuaTVSchema);
+
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 let priorityWords = new Set(); 
 let otherWords = new Set();    
+let vuaTVWords = new Set();
 const suggestionHistory = new Map();
+
 // source
 const PRIORITY_SOURCE = 'https://raw.githubusercontent.com/c5least011/botgoiynoitu/refs/heads/main/data.json';
 const jsonSources = [
@@ -26,16 +32,19 @@ const jsonSources = [
     'https://raw.githubusercontent.com/undertheseanlp/dictionary/refs/heads/hongocduc/dictionary/words.txt'
 ];
 const plainTextSource = 'https://raw.githubusercontent.com/lvdat/phobo-contribute-words/refs/heads/main/accepted-words.txt';
+
 // filter
 function isValid(w) {
     if (!w || w.includes(':') || w.includes('*') || w.includes('-')) return false;
     return w.split(/\s+/).length === 2;
 }
+
 // load filtered
 async function loadDict() {
     console.log('--- Đang quét kho vũ khí ---');
     priorityWords.clear();
     otherWords.clear();
+    vuaTVWords.clear();
     
     try {
         const res = await axios.get(PRIORITY_SOURCE);
@@ -59,6 +68,12 @@ async function loadDict() {
         console.log(`✅ Đã nạp ${dbWords.length} từ từ MongoDB.`);
     } catch (err) { console.log('❌ Lỗi nạp Mongo'); }
 
+    try {
+        const vtvWords = await VuaTVModel.find();
+        vtvWords.forEach(w => vuaTVWords.add(w.text.trim().toLowerCase()));
+        console.log(`✅ Đã nạp ${vuaTVWords.size} từ VuaTV từ MongoDB.`);
+    } catch (err) { console.log('❌ Lỗi nạp VuaTV'); }
+
     for (const url of jsonSources) {
         try {
             const res = await axios.get(url, { responseType: 'text' });
@@ -81,8 +96,9 @@ async function loadDict() {
         });
     } catch (err) {}
 
-    console.log(`--- Xong! Tổng kho: ${priorityWords.size + otherWords.size} từ ---`);
+    console.log(`--- Xong! Tổng kho: ${priorityWords.size + otherWords.size + vuaTVWords.size} từ ---`);
 }
+
 // get input
 function findSuggestion(input, excluded = []) {
     let availableInPriority = Array.from(priorityWords).filter(w => w.startsWith(input + ' ') && !excluded.includes(w));
@@ -104,6 +120,24 @@ function findSuggestion(input, excluded = []) {
     let tag = priorityWords.has(result) ? ' 💎' : '';
     return { word: result, isKill: killWords.includes(result), tag };
 }
+
+// solve vuatv
+function solveVuaTV(input) {
+    const sortedInput = input.replace(/\//g, '').split('').sort().join('');
+    const results = [];
+    const allWords = new Set([...priorityWords, ...otherWords, ...vuaTVWords]);
+    
+    for (let word of allWords) {
+        const cleanWord = word.replace(/\s+/g, '');
+        if (cleanWord.length === sortedInput.length) {
+            if (cleanWord.split('').sort().join('') === sortedInput) {
+                results.push(word);
+            }
+        }
+    }
+    return [...new Set(results)];
+}
+
 // goiynoitu function
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isChatInputCommand()) {
@@ -127,8 +161,9 @@ client.on('interactionCreate', async (interaction) => {
                 components: [row]
             });
         }
+
 // train function
-        if (interaction.commandName === 'train') {
+        if (interaction.commandName === 'trainnoitu') {
             const newWord = interaction.options.getString('tu_moi').trim().toLowerCase();
             if (!isValid(newWord)) return await interaction.reply({ content: 'Từ dỏm k nạp!', ephemeral: true });
             if (priorityWords.has(newWord) || otherWords.has(newWord)) return await interaction.reply({ content: 'có r', ephemeral: true });
@@ -137,6 +172,23 @@ client.on('interactionCreate', async (interaction) => {
                 await WordModel.create({ text: newWord });
                 otherWords.add(newWord);
                 await interaction.reply({ content: `Đã nạp **${newWord}**`, ephemeral: true });
+            } catch (e) { await interaction.reply({ content: 'Lỗi rồi', ephemeral: true }); }
+        }
+
+        if (interaction.commandName === 'goiyvuatv') {
+            const nd = interaction.options.getString('nd').trim().toLowerCase();
+            const found = solveVuaTV(nd);
+            if (found.length === 0) return await interaction.reply({ content: `Chịu, k ghép đc từ nào từ **${nd}**`, ephemeral: true });
+            await interaction.reply({ content: `Gợi ý Vua TV: **${found.join(',埋 ')}**`.replace('埋', ''), ephemeral: true });
+        }
+
+        if (interaction.commandName === 'trainvuatiengviet') {
+            const tuVtv = interaction.options.getString('tu').trim().toLowerCase();
+            if (vuaTVWords.has(tuVtv)) return await interaction.reply({ content: 'có r', ephemeral: true });
+            try {
+                await VuaTVModel.create({ text: tuVtv });
+                vuaTVWords.add(tuVtv);
+                await interaction.reply({ content: `Đã nạp Vua TV: **${tuVtv}**`, ephemeral: true });
             } catch (e) { await interaction.reply({ content: 'Lỗi rồi', ephemeral: true }); }
         }
     }
@@ -157,6 +209,7 @@ client.on('interactionCreate', async (interaction) => {
         });
     }
 });
+
 // slash cmds
 client.on('ready', async () => {
     const commands = [
@@ -164,26 +217,36 @@ client.on('ready', async () => {
             .setName('goiynoitu')
             .setDescription('Gợi ý nối từ')
             .addStringOption(opt => 
-                opt.setName('tu')
-                   .setDescription('Từ cần nối')
-                   .setRequired(true)
+                opt.setName('tu').setDescription('Từ cần nối').setRequired(true)
             ),
         new SlashCommandBuilder()
-            .setName('train')
+            .setName('trainnoitu')
             .setDescription('Dạy bot từ mới')
             .addStringOption(opt => 
-                opt.setName('tu_moi')
-                   .setDescription('Từ 2 tiếng') 
-                   .setRequired(true)
+                opt.setName('tu_moi').setDescription('Từ 2 tiếng').setRequired(true)
+            ),
+        new SlashCommandBuilder()
+            .setName('goiyvuatv')
+            .setDescription('Gợi ý Vua Tiếng Việt')
+            .addStringOption(opt => 
+                opt.setName('nd').setDescription('Nội dung tráo (vd: h/t/n/à/h)').setRequired(true)
+            ),
+        new SlashCommandBuilder()
+            .setName('trainvuatiengviet')
+            .setDescription('Dạy bot từ Vua TV mới')
+            .addStringOption(opt => 
+                opt.setName('tu').setDescription('Từ có nghĩa').setRequired(true)
             )
     ].map(c => c.toJSON());
 
+    const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
     await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
     console.log('🤖 Bot đã tỉnh táo!');
 });
+
 // login bot
-const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 loadDict().then(() => client.login(process.env.TOKEN));
+
 // port
 const express = require('express');
 const app = express();
