@@ -1,3 +1,4 @@
+// require
 require('dotenv').config();
 const { 
     Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, 
@@ -5,8 +6,7 @@ const {
 } = require('discord.js');
 const axios = require('axios');
 const mongoose = require('mongoose');
-
-// --- CẤU HÌNH DB ---
+// setup DB
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('✅ Đã thông nòng MongoDB'))
     .catch(err => console.error('❌ Lỗi DB:', err));
@@ -14,12 +14,11 @@ mongoose.connect(process.env.MONGO_URI)
 const WordSchema = new mongoose.Schema({ text: { type: String, unique: true } });
 const WordModel = mongoose.model('Word', WordSchema);
 
-// --- CẤU HÌNH BOT ---
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 let priorityWords = new Set(); 
 let otherWords = new Set();    
 const suggestionHistory = new Map();
-
+// source
 const PRIORITY_SOURCE = 'https://raw.githubusercontent.com/c5least011/botgoiynoitu/refs/heads/main/data.json';
 const jsonSources = [
     'https://raw.githubusercontent.com/undertheseanlp/dictionary/refs/heads/wiktionary/dictionary/words.txt',
@@ -27,12 +26,12 @@ const jsonSources = [
     'https://raw.githubusercontent.com/undertheseanlp/dictionary/refs/heads/hongocduc/dictionary/words.txt'
 ];
 const plainTextSource = 'https://raw.githubusercontent.com/lvdat/phobo-contribute-words/refs/heads/main/accepted-words.txt';
-
+// filter
 function isValid(w) {
     if (!w || w.includes(':') || w.includes('*') || w.includes('-')) return false;
     return w.split(/\s+/).length === 2;
 }
-
+// load filtered
 async function loadDict() {
     console.log('--- Đang quét kho vũ khí ---');
     priorityWords.clear();
@@ -84,7 +83,7 @@ async function loadDict() {
 
     console.log(`--- Xong! Tổng kho: ${priorityWords.size + otherWords.size} từ ---`);
 }
-
+// get input
 function findSuggestion(input, excluded = []) {
     let availableInPriority = Array.from(priorityWords).filter(w => w.startsWith(input + ' ') && !excluded.includes(w));
     let availableInOther = Array.from(otherWords).filter(w => w.startsWith(input + ' ') && !excluded.includes(w));
@@ -105,7 +104,7 @@ function findSuggestion(input, excluded = []) {
     let tag = priorityWords.has(result) ? ' 💎' : '';
     return { word: result, isKill: killWords.includes(result), tag };
 }
-
+// goiynoitu function
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'goiynoitu') {
@@ -128,7 +127,7 @@ client.on('interactionCreate', async (interaction) => {
                 components: [row]
             });
         }
-
+// train function
         if (interaction.commandName === 'train') {
             const newWord = interaction.options.getString('tu_moi').trim().toLowerCase();
             if (!isValid(newWord)) return await interaction.reply({ content: 'Từ dỏm k nạp!', ephemeral: true });
@@ -158,8 +157,7 @@ client.on('interactionCreate', async (interaction) => {
         });
     }
 });
-
-// FIX LỖI DESCRIPTION Ở ĐÂY
+// slash cmds
 client.on('ready', async () => {
     const commands = [
         new SlashCommandBuilder()
@@ -167,7 +165,7 @@ client.on('ready', async () => {
             .setDescription('Gợi ý nối từ')
             .addStringOption(opt => 
                 opt.setName('tu')
-                   .setDescription('Từ cần nối') // Phải có cái này
+                   .setDescription('Từ cần nối')
                    .setRequired(true)
             ),
         new SlashCommandBuilder()
@@ -175,7 +173,7 @@ client.on('ready', async () => {
             .setDescription('Dạy bot từ mới')
             .addStringOption(opt => 
                 opt.setName('tu_moi')
-                   .setDescription('Từ 2 tiếng') // Phải có cái này
+                   .setDescription('Từ 2 tiếng') 
                    .setRequired(true)
             )
     ].map(c => c.toJSON());
@@ -183,10 +181,10 @@ client.on('ready', async () => {
     await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
     console.log('🤖 Bot đã tỉnh táo!');
 });
-
+// login bot
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 loadDict().then(() => client.login(process.env.TOKEN));
-
+// port
 const express = require('express');
 const app = express();
 app.get('/', (req, res) => res.send('Bot chạy r m!'));
